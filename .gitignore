@@ -22,3 +22,5 @@ copyAkkaTutorial2Thor.sh
 ddm-exercise/src/main/java/de/hpi/ddm/solution/*
 ddm-lmp/src/main/java/de/hpi/ddm/solution/*
 ddm-exam
+akka-tutorial/nbactions.xml
+ddm-exercise/nb-configuration.xml
