@@ -198,11 +198,16 @@ public class LargeMessageProxy extends AbstractLoggingActor {
             buffer = null;
         }
         
-        public static class StreamInitialized {}
+        public static class StreamInitialized implements Serializable {
+            private static final long serialVersionUID = 2940665245810221101L;
+        }
 
-        public static class StreamCompleted {}
+        public static class StreamCompleted implements Serializable {
+            private static final long serialVersionUID = 2940665245810221102L;
+        }
 
-        public static class StreamFailure {
+        public static class StreamFailure implements Serializable {
+            private static final long serialVersionUID = 2940665245810221103L;
             private final Throwable cause;
 
             public StreamFailure(Throwable cause) {
