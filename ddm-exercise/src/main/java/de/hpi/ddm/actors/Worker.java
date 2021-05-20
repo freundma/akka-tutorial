@@ -48,6 +48,18 @@ public class Worker extends AbstractLoggingActor {
 		private static final long serialVersionUID = 8343040942748609598L;
 		private BloomFilter welcomeData;
 	}
+        
+        @Data @NoArgsConstructor @AllArgsConstructor
+        public static class HintMessage implements Serializable {
+            private static final long serialVersionUID = 1L; //TODO: Dafuer kann das commandline tool serialver benutzt werden
+            private String charset;
+            private String hintHash;
+            private int passwordLength;
+        }
+        
+        public static class YieldMessage implements Serializable {
+            private static final long serialVersionUID = 2L; //TODO
+        }
 	
 	/////////////////
 	// Actor State //
