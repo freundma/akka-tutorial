@@ -21,6 +21,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
+import java.util.ArrayList;
 
 public class Worker extends AbstractLoggingActor {
 
@@ -46,19 +47,29 @@ public class Worker extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class WelcomeMessage implements Serializable {
 		private static final long serialVersionUID = 8343040942748609598L;
-		private BloomFilter welcomeData;
+		private BloomFilter welcomeData;    // contains bitset with known information (which chars are already found)
+                private String charset;             // the charset to work on
+                private String hintHash;            // the hint hash to crack
 	}
         
         @Data @NoArgsConstructor @AllArgsConstructor
         public static class HintMessage implements Serializable {
             private static final long serialVersionUID = 1L; //TODO: Dafuer kann das commandline tool serialver benutzt werden
-            private String charset;
-            private String hintHash;
-            private int passwordLength;
+            private BloomFilter information;                 // information about the chars
         }
         
         public static class YieldMessage implements Serializable {
             private static final long serialVersionUID = 2L; //TODO
+        }
+        
+        @Data @NoArgsConstructor @AllArgsConstructor
+        public static class PasswordMessage implements Serializable {
+            private static final long serialVersionUID = 3L; //TODO
+            private BloomFilter allInformation;     // all information out of the hints
+            private String charset;                 // charset to work in
+            private String passwordHash;            // password hash to crack
+            private int passwordLength;             // length of the password
+            private int id;                         // ID of the line
         }
 	
 	/////////////////
@@ -69,6 +80,12 @@ public class Worker extends AbstractLoggingActor {
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
 	private long registrationTime;
+        private BloomFilter data;
+        private String charset;
+        private String hash;
+        private String password;
+        int index;
+        
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -97,6 +114,8 @@ public class Worker extends AbstractLoggingActor {
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
 				.match(WelcomeMessage.class, this::handle)
+                                .match(YieldMessage.class, this::handle)
+                                .match(HintMessage.class, this::handle)
 				// TODO: Add further messages here to share work between Master and Worker actors
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
@@ -133,8 +152,124 @@ public class Worker extends AbstractLoggingActor {
 	private void handle(WelcomeMessage message) {
 		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
 		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+                
+                // get info out of message
+                this.data = message.getWelcomeData();
+                this.charset = message.getCharset();
+                this.hash = message.getHintHash();
+                
+                // start with initial calculation
+                calculate(-1);
 	}
+        
+        private void handle(YieldMessage message) {
+            /* in this case we just progress with our hint cracking
+               and simply take the next index of the charset */
+            
+            calculate(this.index);
+        }
+        
+        private void handle(HintMessage message) {
+            // we received a message with new information and add them to ours
+            this.data.merge(message.getInformation());
+            
+            //proceed with calculating
+            calculate(this.index);
+        }
+        
+        private void handle(PasswordMessage message) {
+            
+            this.charset = message.getCharset();
+            this.hash = message.getPasswordHash();
+            this.data = message.getAllInformation();
+            
+            //generate final charset for password cracking
+            String finalCharset = "";
+            for (int i = 0; i < charset.length(); i++) {
+                if (!this.data.getBits().get(i)) {
+                    finalCharset = finalCharset + charset.charAt(i);
+                }
+            }
+            
+            /* TODO performance: Im Moment werden alle Kombinationen UND alle
+               Hashes ausgerechnet, egal ob das Passwort schon recht früh gefunden wird.
+               Besser: Alle Kombinationen ausrechnen (geht bei rekursiv auch nicht anders)
+               und danach hashen bis Lösung geunden, so wie beim Hintknacken.
+            */
+            this.log().info("Starting to crack password: ID " + message.getId()
+                            + " with charset " + finalCharset);
+            crackPassword(finalCharset.toCharArray(), message.getPasswordLength());
+            
+            //TODO result message for master
+            
+            
+            
+        }
+        
+        private void calculate(int currentIndex) {
+            // do one calculation round
+            if (calculationRound(currentIndex)) {
+                // we cracked the hash, we tell the master about our success, we are done
+                this.self().tell(new HintMessage(data), this.getSender());
+            } else {
+                // we did not crack the hash, we yield to hear for eventually cracked hints
+                this.self().tell(new YieldMessage(), this.getSelf());
+            }
+        }
+        
+        private boolean calculationRound(int currentIndex) {
+            // find the next char to work with and create new charset without it
+            this.index = findNext(currentIndex);
+            String removal = this.charset.substring(this.index, this.index+1);
+            String modifiedCharset = this.charset.replace(removal,"");
+            
+            // generate all permutations 
+            this.log().info("Generating all permutations of charset without " + removal);
+            List<String> permutationList = new ArrayList<>();
+            heapPermutation(modifiedCharset.toCharArray(), modifiedCharset.length(),
+                               modifiedCharset.length(), permutationList);
+            
+            // hash all permutations and try to find a match
+            for (String perm : permutationList){
+                if (hash(perm).equals(this.hash)){
+                    this.log().info("Solved a hint: " + removal + " does not occur in the password");
+                    //set the index in our BloomFilter
+                    this.data.getBits().set(this.index);
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        private int findNext(int currentIndex) {
+            return this.data.getBits().nextClearBit(currentIndex+1);
+        }
+        
+        private void crackPassword(char[] set, int pwLength) {
+            crack(set, "", set.length, pwLength);
+        }
 	
+        private void crack(char[] set, String prefix, int n, int k) {
+            // Base case: k is 0
+            // try to hash 
+            if (k == 0) {
+                if (hash(prefix).equals(this.hash)) {
+                    this.password = prefix;
+                    return;
+                }
+            }
+            // One by one add all characters
+            // from set and recursively
+            // call for k equals to k-1
+            for (int i = 0; i < n; i++){
+                // Next character of input added
+                String newPrefix = prefix + set[i];
+                // k is decreased, because
+                // we have added a new character
+                crack(set, newPrefix, n, k-1);
+            }
+        }
+        
 	private String hash(String characters) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
