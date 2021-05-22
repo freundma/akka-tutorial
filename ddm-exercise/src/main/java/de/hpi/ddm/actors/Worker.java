@@ -174,15 +174,16 @@ public class Worker extends AbstractLoggingActor {
             /* in this case we just progress with our hint cracking
                and simply take the next index of the charset */
             
-            calculate(this.index);
+	    // start from the next possible index	
+            calculate(this.index+1);
         }
         
         private void handle(HintMessage message) {
             // we received a message with new information and add them to ours
             this.data.merge(message.getInformation());
             
-            //proceed with calculating
-            calculate(this.index);
+            // proceed with calculating, start from the next possible index
+            calculate(this.index+1);
         }
         
         private void handle(PasswordMessage message) {
@@ -231,7 +232,7 @@ public class Worker extends AbstractLoggingActor {
             this.index = findNext(currentIndex);
             String removal = this.charset.substring(this.index, this.index+1);
             String modifiedCharset = this.charset.replace(removal,"");
-            
+	
             // generate all permutations 
             this.log().info("Generating all permutations of charset with ID " + this.id + " without " + removal);
             List<String> permutationList = new ArrayList<>();
