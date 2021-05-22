@@ -50,12 +50,14 @@ public class Worker extends AbstractLoggingActor {
 		private BloomFilter welcomeData;    // contains bitset with known information (which chars are already found)
                 private String charset;             // the charset to work on
                 private String hintHash;            // the hint hash to crack
+                private int id;                     // id of the line
 	}
         
         @Data @NoArgsConstructor @AllArgsConstructor
         public static class HintMessage implements Serializable {
             private static final long serialVersionUID = 1L; //TODO: Dafuer kann das commandline tool serialver benutzt werden
             private BloomFilter information;                 // information about the chars
+            private int id;                                  // id of the line
         }
         
         public static class YieldMessage implements Serializable {
@@ -84,6 +86,7 @@ public class Worker extends AbstractLoggingActor {
         private String charset;
         private String hash;
         private String password;
+        private int id;
         int index;
         
 	
