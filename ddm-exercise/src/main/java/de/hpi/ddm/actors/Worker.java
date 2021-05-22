@@ -22,6 +22,7 @@ import lombok.NoArgsConstructor;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 import java.util.ArrayList;
+import java.util.Random;
 
 public class Worker extends AbstractLoggingActor {
 
@@ -119,6 +120,7 @@ public class Worker extends AbstractLoggingActor {
 				.match(WelcomeMessage.class, this::handle)
                                 .match(YieldMessage.class, this::handle)
                                 .match(HintMessage.class, this::handle)
+                                .match(PasswordMessage.class, this::handle)
 				// TODO: Add further messages here to share work between Master and Worker actors
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
@@ -160,9 +162,12 @@ public class Worker extends AbstractLoggingActor {
                 this.data = message.getWelcomeData();
                 this.charset = message.getCharset();
                 this.hash = message.getHintHash();
+                this.id = message.getId();
                 
-                // start with initial calculation
-                calculate(-1);
+                // start with random index
+                Random r = new Random();
+                this.index = r.nextInt(charset.length());
+                calculate(this.index);
 	}
         
         private void handle(YieldMessage message) {
@@ -185,6 +190,7 @@ public class Worker extends AbstractLoggingActor {
             this.charset = message.getCharset();
             this.hash = message.getPasswordHash();
             this.data = message.getAllInformation();
+            this.id = message.getId();
             
             //generate final charset for password cracking
             String finalCharset = "";
@@ -213,7 +219,7 @@ public class Worker extends AbstractLoggingActor {
             // do one calculation round
             if (calculationRound(currentIndex)) {
                 // we cracked the hash, we tell the master about our success, we are done
-                this.self().tell(new HintMessage(data), this.getSender());
+                this.self().tell(new HintMessage(this.data,this.id), this.getSender());
             } else {
                 // we did not crack the hash, we yield to hear for eventually cracked hints
                 this.self().tell(new YieldMessage(), this.getSelf());
@@ -227,7 +233,7 @@ public class Worker extends AbstractLoggingActor {
             String modifiedCharset = this.charset.replace(removal,"");
             
             // generate all permutations 
-            this.log().info("Generating all permutations of charset without " + removal);
+            this.log().info("Generating all permutations of charset with ID " + this.id + " without " + removal);
             List<String> permutationList = new ArrayList<>();
             heapPermutation(modifiedCharset.toCharArray(), modifiedCharset.length(),
                                modifiedCharset.length(), permutationList);
@@ -245,21 +251,33 @@ public class Worker extends AbstractLoggingActor {
         }
         
         private int findNext(int currentIndex) {
-            return this.data.getBits().nextClearBit(currentIndex+1);
+            int nextIndex = this.data.getBits().nextClearBit(currentIndex);
+            if (nextIndex == -1) {
+                nextIndex = this.data.getBits().nextClearBit(0);
+            } 
+            return nextIndex;
         }
         
         private void crackPassword(char[] set, int pwLength) {
-            crack(set, "", set.length, pwLength);
-        }
-	
-        private void crack(char[] set, String prefix, int n, int k) {
-            // Base case: k is 0
-            // try to hash 
-            if (k == 0) {
-                if (hash(prefix).equals(this.hash)) {
-                    this.password = prefix;
+            List<String> combinations = new ArrayList<>();
+            
+            // generate all combinations of with charset and given password length
+            genAllCombinations(set, "", set.length, pwLength, combinations);
+            
+            // hash until we find the correct passwort
+            for (String comb : combinations) {
+                if (hash(comb).equals(this.hash)) {
+                    this.password = comb;
                     return;
                 }
+            }
+            
+        }
+	
+        private void genAllCombinations(char[] set, String prefix, int n, int k, List <String> l) {
+            // Base case: k is 0
+            if (k == 0) {
+                l.add(prefix);
             }
             // One by one add all characters
             // from set and recursively
@@ -269,7 +287,7 @@ public class Worker extends AbstractLoggingActor {
                 String newPrefix = prefix + set[i];
                 // k is decreased, because
                 // we have added a new character
-                crack(set, newPrefix, n, k-1);
+                genAllCombinations(set, newPrefix, n, k-1,l);
             }
         }
         
