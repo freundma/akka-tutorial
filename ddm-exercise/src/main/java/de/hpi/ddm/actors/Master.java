@@ -1,9 +1,7 @@
 package de.hpi.ddm.actors;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -33,6 +31,10 @@ public class Master extends AbstractLoggingActor {
 		this.workers = new ArrayList<>();
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 		this.welcomeData = welcomeData;
+		this.hintTaskMessages = new LinkedList<>();
+		this.workerHintMessageMap = new HashMap<>();
+		this.passwordMessages = new ArrayList<>();
+		this.idleWorkers = new LinkedList<ActorRef>();
 	}
 
 	////////////////////
@@ -54,6 +56,22 @@ public class Master extends AbstractLoggingActor {
 	public static class RegistrationMessage implements Serializable {
 		private static final long serialVersionUID = 3303081601659723997L;
 	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class HintResultMessage implements  Serializable {
+		private static final long serialVersionUID = 4L;
+		private String result;
+		private int id;
+
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class PasswordResultMessage implements  Serializable {
+		private static final long serialVersionUID = 4L;
+		private String result;
+		private int id;
+
+	}
 	
 	/////////////////
 	// Actor State //
@@ -64,7 +82,10 @@ public class Master extends AbstractLoggingActor {
 	private final List<ActorRef> workers;
 	private final ActorRef largeMessageProxy;
 	private final BloomFilter welcomeData;
-
+	private final Map<Integer , Worker> workerHintMessageMap;
+	private final Queue<Worker.WelcomeMessage> hintTaskMessages; //TODO: create message for solving a hint
+	private final Queue<ActorRef> idleWorkers;
+	private final List<Worker.PasswordMessage> passwordMessages;
 	private long startTime;
 	
 	/////////////////////
@@ -87,9 +108,20 @@ public class Master extends AbstractLoggingActor {
 				.match(BatchMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
+				.match(PasswordResultMessage.class, this::handle)
+				.match(HintResultMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
+	}
+
+	private void handle(HintResultMessage hintResultMessage) {
+		//Todo: send filter update to all workers that work on hints of id
+		// and update Bloomfilter of hints in queue with id
+	}
+
+	private void handle(PasswordResultMessage passwordResultMessage) {
+		String result = Integer.toString(passwordResultMessage.getId()).concat(";").concat(passwordResultMessage.result);
+		this.collector.tell(new Collector.CollectMessage(result), this.self());
 	}
 
 	protected void handle(StartMessage message) {
@@ -99,7 +131,7 @@ public class Master extends AbstractLoggingActor {
 	}
 	
 	protected void handle(BatchMessage message) {
-		
+
 		// TODO: This is where the task begins:
 		// - The Master received the first batch of input records.
 		// - To receive the next batch, we need to send another ReadMessage to the reader.
@@ -114,24 +146,44 @@ public class Master extends AbstractLoggingActor {
 		// b) Memory reduction: If the batches are processed sequentially, the memory consumption can be kept constant; if the entire input is read into main memory, the memory consumption scales at least linearly with the input size.
 		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
 
-		// TODO: Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
+		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
 		if (message.getLines().isEmpty()) {
 			this.terminate();
 			return;
 		}
 		
-		// TODO: Process the lines with the help of the worker actors
-		for (String[] line : message.getLines())
-			this.log().error("Need help processing: {}", Arrays.toString(line));
-		
-		// TODO: Send (partial) results to the Collector
-		this.collector.tell(new Collector.CollectMessage("If I had results, this would be one."), this.self());
-		
-		// TODO: Fetch further lines from the Reader
-		this.reader.tell(new Reader.ReadMessage(), this.self());
-		
+		for (String[] line : message.getLines()) {
+			String charset = line[2];
+			String passwordHash = line[3];
+			int passwordLength = Integer.parseInt(line[4]);
+			int id = Integer.parseInt(line[0]);
+
+			//Todo: add Bloomfilter params
+			Worker.PasswordMessage passwordMessage = new Worker.PasswordMessage( new BloomFilter(), charset, passwordHash, passwordLength, id);
+			this.passwordMessages.add(passwordMessage);
+
+			//place hint tasks in queue
+			for(int i = 5; i < line.length; i++) {
+				String hintHash = line[i];
+				this.hintTaskMessages.add(new Worker.WelcomeMessage(new BloomFilter(), charset, hintHash, id));
+			}
+		}
+
+
+		for( ActorRef worker : this.idleWorkers) {
+			this.tellNextHintTask(worker);
+		}
 	}
-	
+
+	private void tellNextHintTask(ActorRef worker) {
+		if(hintTaskMessages.isEmpty()){
+			this.idleWorkers.add(worker);
+			this.reader.tell(new Reader.ReadMessage(), this.self());
+		} else {
+			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(this.hintTaskMessages.poll(), worker), this.self());
+		}
+	}
+
 	protected void terminate() {
 		this.collector.tell(new Collector.PrintMessage(), this.self());
 		
@@ -153,10 +205,9 @@ public class Master extends AbstractLoggingActor {
 		this.context().watch(this.sender());
 		this.workers.add(this.sender());
 		this.log().info("Registered {}", this.sender());
-		
-		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
-		
-		// TODO: Assign some work to registering workers. Note that the processing of the global task might have already started.
+
+		//Assign some work to registering workers. Note that the processing of the global task might have already started.
+		this.tellNextHintTask(this.sender());
 	}
 	
 	protected void handle(Terminated message) {
