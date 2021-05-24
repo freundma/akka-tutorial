@@ -82,6 +82,7 @@ public class Worker extends AbstractLoggingActor {
 	private Member masterSystem;
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
+        private ActorRef master;
 	private long registrationTime;
         private BloomFilter data;
         private String charset;
@@ -159,6 +160,7 @@ public class Worker extends AbstractLoggingActor {
 		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
                 
                 // get info out of message
+                this.master = this.getSender();
                 this.data = message.getWelcomeData();
                 this.charset = message.getCharset();
                 this.hash = message.getHintHash();
@@ -219,7 +221,7 @@ public class Worker extends AbstractLoggingActor {
             // do one calculation round
             if (calculationRound(currentIndex)) {
                 // we cracked the hash, we tell the master about our success, we are done
-                this.sender().tell(new HintMessage(this.data,this.id), this.self());
+                this.master.tell(new HintMessage(this.data,this.id), this.self());
             } else {
                 // we did not crack the hash, we yield to hear for eventually cracked hints
                 this.self().tell(new YieldMessage(), this.getSelf());
