@@ -228,8 +228,8 @@ public class Worker extends AbstractLoggingActor {
         private boolean calculationRound(int currentIndex) {
             // find the next char to work with and create new charset without it
             this.index = findNext(currentIndex);
-            String removal = this.charset.substring(this.index, this.index+1);
-            String modifiedCharset = this.charset.replace(removal,"");
+            char removal = this.charset.charAt(this.index);
+            String modifiedCharset = this.charset.replace(String.valueOf(removal),"");
 	
             // generate all permutations 
             this.log().info("Generating all permutations of charset with ID " + this.id + " without " + removal);
