@@ -182,6 +182,7 @@ public class Worker extends AbstractLoggingActor {
             // we received a message with new information and add them to ours
             // Todo: check if id of hint belongs to current id ?! an old hint update could still be in inbox
             this.data.merge(message.getInformation());
+            this.log().info("Received new Hint for id " + message.getId());
             
             // proceed with calculating, start from the next possible index
             calculate(this.index+1);
@@ -232,7 +233,7 @@ public class Worker extends AbstractLoggingActor {
             String modifiedCharset = this.charset.replace(String.valueOf(removal),"");
 	
             // generate all permutations 
-            this.log().info("Generating all permutations of charset with ID " + this.id + " without " + removal);
+            this.log().info("Generating all permutations of charset with ID " + this.id + " without " + removal + " for hint " + this.hash);
             List<String> permutationList = new ArrayList<>();
             heapPermutation(modifiedCharset.toCharArray(), modifiedCharset.length(),
                                modifiedCharset.length(), permutationList);
@@ -251,7 +252,7 @@ public class Worker extends AbstractLoggingActor {
         
         private int findNext(int currentIndex) {
             int nextIndex = this.data.getBits().nextClearBit(currentIndex);
-            if (nextIndex == -1) {
+            if (nextIndex == -1 || nextIndex > this.charset.length() - 1) {
                 nextIndex = this.data.getBits().nextClearBit(0);
             } 
             return nextIndex;
