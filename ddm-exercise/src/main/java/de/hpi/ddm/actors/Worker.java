@@ -219,7 +219,7 @@ public class Worker extends AbstractLoggingActor {
             // do one calculation round
             if (calculationRound(currentIndex)) {
                 // we cracked the hash, we tell the master about our success, we are done
-                this.self().tell(new HintMessage(this.data,this.id), this.getSender());
+                this.sender().tell(new HintMessage(this.data,this.id), this.self());
             } else {
                 // we did not crack the hash, we yield to hear for eventually cracked hints
                 this.self().tell(new YieldMessage(), this.getSelf());

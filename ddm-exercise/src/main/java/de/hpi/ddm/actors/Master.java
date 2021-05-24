@@ -32,7 +32,7 @@ public class Master extends AbstractLoggingActor {
 		this.passwordTasksQueue = new LinkedList<>();
 		this.workerHintMessageMap = new HashMap<>();
 		this.passwordMessages = new ArrayList<>();
-		this.idleWorkers = new LinkedList<ActorRef>();
+		this.idleWorkers = new LinkedList<>();
 	}
 
 	////////////////////
@@ -106,6 +106,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	private void handle(Worker.HintMessage hintMessage) {
+		this.log().info("Received Hint from " + this.sender());
 
 		int id = hintMessage.getId();
 		Optional<Worker.PasswordMessage> passwordMessage = this.passwordMessages.stream().filter(m -> m.getId() == id).findAny();
@@ -171,7 +172,7 @@ public class Master extends AbstractLoggingActor {
 		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
 		if (message.getLines().isEmpty()) {
 			noMoreBatches = true;
-		}else {
+		} else {
 
 			for (String[] line : message.getLines()) {
 				int id = Integer.parseInt(line[0]);
@@ -191,10 +192,10 @@ public class Master extends AbstractLoggingActor {
 			}
 		}
 
-
-		for( ActorRef worker : this.idleWorkers) {
-			this.tellNextTask(worker);
+		while (!idleWorkers.isEmpty() || this.hintTasksQueue.isEmpty() && this.passwordTasksQueue.isEmpty()) {
+			this.tellNextTask(this.idleWorkers.remove());
 		}
+
 	}
 
 	private void tellNextTask(ActorRef receiver) {
@@ -214,6 +215,7 @@ public class Master extends AbstractLoggingActor {
 			this.idleWorkers.add(receiver);
 			this.reader.tell(new Reader.ReadMessage(), this.self());
 		} else {
+			this.log().info(hintTasksQueue.toString());
 			Worker.WelcomeMessage task = this.hintTasksQueue.remove();
 			receiver.tell(task, this.self());
 			//this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(task, receiver), this.self());
