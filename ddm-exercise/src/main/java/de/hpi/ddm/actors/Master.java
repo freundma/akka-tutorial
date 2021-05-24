@@ -6,13 +6,9 @@ import java.util.stream.Collectors;
 
 import akka.actor.*;
 import de.hpi.ddm.structures.BloomFilter;
-import it.unimi.dsi.fastutil.Hash;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import javax.swing.text.html.Option;
-
 public class Master extends AbstractLoggingActor {
 
 	////////////////////////
@@ -31,7 +27,8 @@ public class Master extends AbstractLoggingActor {
 		this.workers = new ArrayList<>();
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 		this.welcomeData = welcomeData;
-		this.hintTaskMessages = new LinkedList<>();
+		this.hintTasksQueue = new LinkedList<>();
+		this.passwordTasksQueue = new LinkedList<>()
 		this.workerHintMessageMap = new HashMap<>();
 		this.passwordMessages = new ArrayList<>();
 		this.idleWorkers = new LinkedList<ActorRef>();
@@ -75,9 +72,10 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef largeMessageProxy;
 	private final BloomFilter welcomeData;
 	private final Map<Integer , List<ActorRef>> workerHintMessageMap;
-	private final Queue<Worker.WelcomeMessage> hintTaskMessages; //TODO: create message for solving a hint
+	private final Queue<Worker.WelcomeMessage> hintTasksQueue;
 	private final Queue<ActorRef> idleWorkers;
 	private final List<Worker.PasswordMessage> passwordMessages;
+	private final Queue<Worker.PasswordMessage> passwordTasksQueue;
 	private long startTime;
 	
 	/////////////////////
@@ -115,28 +113,28 @@ public class Master extends AbstractLoggingActor {
 			worker.tell(new Worker.HintMessage(information, id), this.self());
 		}
 
-
-
-		for (Worker.WelcomeMessage hintTaskMessage : this.hintTaskMessages) {
+		for (Worker.WelcomeMessage hintTaskMessage : this.hintTasksQueue) {
 			if (hintTaskMessage.getId() == id) {
 				hintTaskMessage.setWelcomeData(hintTaskMessage.getWelcomeData().merge(information);
 			}
 		}
 
 		// remove worker from workerHintMap
-		this.workerHintMessageMap.replace(id, this.workerHintMessageMap.get(id), workersToBeUpdated);
+		if(workersToBeUpdated.isEmpty()) this.workerHintMessageMap.remove(id);
+		else this.workerHintMessageMap.replace(id, this.workerHintMessageMap.get(id), workersToBeUpdated);
 
 		// if all hints are present update password bloom filter to given information and put into queue
-		if (workersToBeUpdated.isEmpty() && this.hintTaskMessages.stream().noneMatch(task -> task.getId() == id)) {
+		if (workersToBeUpdated.isEmpty() && this.hintTasksQueue.stream().noneMatch(task -> task.getId() == id)) {
 			Optional<Worker.PasswordMessage> passwordMessage = this.passwordMessages.stream().filter(m -> m.getId() == id).findAny();
-			passwordMessage.ifPresent(message -> message.setAllInformation(information));
-		};
+			passwordMessage.ifPresent(message -> {
+				this.passwordMessages.remove(message);
+				message.setAllInformation(information);
+				this.passwordTasksQueue.add(message);
+			});
+		}
 
-		// tell next Job to Worker
+		// tell next Task to Worker
 		this.tellNextTask(this.sender());
-
-
-
 	}
 
 	private void handle(PasswordResultMessage passwordResultMessage) {
@@ -185,7 +183,7 @@ public class Master extends AbstractLoggingActor {
 			//place hint tasks in queue
 			for(int i = firstHintIndex; i < line.length; i++) {
 				String hintHash = line[i];
-				this.hintTaskMessages.add(new Worker.WelcomeMessage(new BloomFilter(), charset, hintHash, id));
+				this.hintTasksQueue.add(new Worker.WelcomeMessage(new BloomFilter(), charset, hintHash, id));
 			}
 		}
 
@@ -204,16 +202,17 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	private void tellNextHintTask(ActorRef worker) {
-		if(hintTaskMessages.isEmpty()){
+		if(hintTasksQueue.isEmpty()){
 			this.idleWorkers.add(worker);
 			this.reader.tell(new Reader.ReadMessage(), this.self());
 		} else {
-			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(this.hintTaskMessages.poll(), worker), this.self());
+			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(this.hintTasksQueue.poll(), worker), this.self());
 		}
 	}
 
 	private void tellNextPasswordTask(ActorRef receiver) {
-		// Todo: poll next password message that has all infomration
+		// poll next password message that has all information
+		receiver.tell(this.passwordTasksQueue.poll(), this.self());
 	}
 
 	protected void terminate() {

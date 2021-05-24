@@ -210,10 +210,7 @@ public class Worker extends AbstractLoggingActor {
                             + " with charset " + finalCharset);
             crackPassword(finalCharset.toCharArray(), message.getPasswordLength());
             
-            //TODO result message for master
-            
-            
-            
+            this.sender().tell(new Master.PasswordResultMessage(this.password, this.id), this.self());
         }
         
         private void calculate(int currentIndex) {
