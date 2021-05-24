@@ -16,6 +16,7 @@ public class Master extends AbstractLoggingActor {
 	////////////////////////
 	
 	public static final String DEFAULT_NAME = "master";
+	private boolean noMoreBatches;
 
 	public static Props props(final ActorRef reader, final ActorRef collector, final BloomFilter welcomeData) {
 		return Props.create(Master.class, () -> new Master(reader, collector, welcomeData));
@@ -117,7 +118,6 @@ public class Master extends AbstractLoggingActor {
 			List<ActorRef> workersToBeUpdated = this.workerHintMessageMap.get(id).stream().filter(actorRef -> !actorRef.equals(this.sender())).collect(Collectors.toList());
 			// if all hints are present  to given information and put into queue
 			if (workersToBeUpdated.isEmpty() && this.hintTasksQueue.stream().noneMatch(task -> task.getId() == id)) {
-				this.passwordMessages.remove(message);
 				this.passwordTasksQueue.add(message);
 			} else {
 				for (ActorRef worker : workersToBeUpdated) {
@@ -130,10 +130,9 @@ public class Master extends AbstractLoggingActor {
 					}
 				}
 				// remove worker from workerHintMap
-				if(workersToBeUpdated.isEmpty()) this.workerHintMessageMap.remove(id);
-				else this.workerHintMessageMap.replace(id, workersToBeUpdated);
 			}
-
+			this.workerHintMessageMap.replace(id, workersToBeUpdated);
+			if(workersToBeUpdated.isEmpty()) this.workerHintMessageMap.remove(id);
 		});
 
 		// tell next Task to Worker
@@ -143,6 +142,8 @@ public class Master extends AbstractLoggingActor {
 	private void handle(PasswordResultMessage passwordResultMessage) {
 		String result = Integer.toString(passwordResultMessage.getId()).concat(";").concat(passwordResultMessage.result);
 		this.collector.tell(new Collector.CollectMessage(result), this.self());
+		Optional<Worker.PasswordMessage> messageToRemove = this.passwordMessages.stream().filter(m -> m.getId() == passwordResultMessage.getId()).findAny();
+		messageToRemove.ifPresent(this.passwordMessages::remove);
 	}
 
 	protected void handle(StartMessage message) {
@@ -169,30 +170,30 @@ public class Master extends AbstractLoggingActor {
 
 		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
 		if (message.getLines().isEmpty()) {
-			this.terminate();
-			return;
-		}
+			noMoreBatches = true;
+		}else {
 
-		for (String[] line : message.getLines()) {
-			int id = Integer.parseInt(line[0]);
-			String charset = line[2];
-			int passwordLength = Integer.parseInt(line[3]);
-			String passwordHash = line[4];
+			for (String[] line : message.getLines()) {
+				int id = Integer.parseInt(line[0]);
+				String charset = line[2];
+				int passwordLength = Integer.parseInt(line[3]);
+				String passwordHash = line[4];
 
-			Worker.PasswordMessage passwordMessage = new Worker.PasswordMessage( new BloomFilter(), charset, passwordHash, passwordLength, id);
-			this.passwordMessages.add(passwordMessage);
+				Worker.PasswordMessage passwordMessage = new Worker.PasswordMessage(new BloomFilter(charset.length(), false), charset, passwordHash, passwordLength, id);
+				this.passwordMessages.add(passwordMessage);
 
-			int firstHintIndex = 5;
-			//place hint tasks in queue
-			for(int i = firstHintIndex; i < line.length; i++) {
-				String hintHash = line[i];
-				this.hintTasksQueue.add(new Worker.WelcomeMessage(new BloomFilter(), charset, hintHash, id));
+				int firstHintIndex = 5;
+				//place hint tasks in queue
+				for (int i = firstHintIndex; i < line.length; i++) {
+					String hintHash = line[i];
+					this.hintTasksQueue.add(new Worker.WelcomeMessage(new BloomFilter(charset.length(), false), charset, hintHash, id));
+				}
 			}
 		}
 
 
 		for( ActorRef worker : this.idleWorkers) {
-			this.tellNextHintTask(worker);
+			this.tellNextTask(worker);
 		}
 	}
 
@@ -205,8 +206,10 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	private void tellNextHintTask(ActorRef receiver) {
+		if (this.noMoreBatches && hintTasksQueue.isEmpty() && passwordMessages.isEmpty()) {
+
+		}
 		if(hintTasksQueue.isEmpty()){
-			// Todo: add Termination logic
 			this.idleWorkers.add(receiver);
 			this.reader.tell(new Reader.ReadMessage(), this.self());
 		} else {
