@@ -2,16 +2,16 @@ package de.hpi.ddm.actors;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.stream.Collectors;
 
-import akka.actor.AbstractLoggingActor;
-import akka.actor.ActorRef;
-import akka.actor.PoisonPill;
-import akka.actor.Props;
-import akka.actor.Terminated;
+import akka.actor.*;
 import de.hpi.ddm.structures.BloomFilter;
+import it.unimi.dsi.fastutil.Hash;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import javax.swing.text.html.Option;
 
 public class Master extends AbstractLoggingActor {
 
@@ -58,14 +58,6 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
-	public static class HintResultMessage implements  Serializable {
-		private static final long serialVersionUID = 4L;
-		private String result;
-		private int id;
-
-	}
-
-	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class PasswordResultMessage implements  Serializable {
 		private static final long serialVersionUID = 4L;
 		private String result;
@@ -82,7 +74,7 @@ public class Master extends AbstractLoggingActor {
 	private final List<ActorRef> workers;
 	private final ActorRef largeMessageProxy;
 	private final BloomFilter welcomeData;
-	private final Map<Integer , Worker> workerHintMessageMap;
+	private final Map<Integer , List<ActorRef>> workerHintMessageMap;
 	private final Queue<Worker.WelcomeMessage> hintTaskMessages; //TODO: create message for solving a hint
 	private final Queue<ActorRef> idleWorkers;
 	private final List<Worker.PasswordMessage> passwordMessages;
@@ -109,14 +101,42 @@ public class Master extends AbstractLoggingActor {
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
 				.match(PasswordResultMessage.class, this::handle)
-				.match(HintResultMessage.class, this::handle)
+				.match(Worker.HintMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
 
-	private void handle(HintResultMessage hintResultMessage) {
-		//Todo: send filter update to all workers that work on hints of id
-		// and update Bloomfilter of hints in queue with id
+	private void handle(Worker.HintMessage hintMessage) {
+		// send filter update to all workers that work on hints of id
+		int id = hintMessage.getId();
+		BloomFilter information = hintMessage.getInformation();
+		List<ActorRef> workersToBeUpdated = this.workerHintMessageMap.get(id).stream().filter(actorRef -> !actorRef.equals(this.sender())).collect(Collectors.toList());
+		for (ActorRef worker : workersToBeUpdated) {
+			worker.tell(new Worker.HintMessage(information, id), this.self());
+		}
+
+
+
+		for (Worker.WelcomeMessage hintTaskMessage : this.hintTaskMessages) {
+			if (hintTaskMessage.getId() == id) {
+				hintTaskMessage.setWelcomeData(hintTaskMessage.getWelcomeData().merge(information);
+			}
+		}
+
+		// remove worker from workerHintMap
+		this.workerHintMessageMap.replace(id, this.workerHintMessageMap.get(id), workersToBeUpdated);
+
+		// if all hints are present update password bloom filter to given information and put into queue
+		if (workersToBeUpdated.isEmpty() && this.hintTaskMessages.stream().noneMatch(task -> task.getId() == id)) {
+			Optional<Worker.PasswordMessage> passwordMessage = this.passwordMessages.stream().filter(m -> m.getId() == id).findAny();
+			passwordMessage.ifPresent(message -> message.setAllInformation(information));
+		};
+
+		// tell next Job to Worker
+		this.tellNextTask(this.sender());
+
+
+
 	}
 
 	private void handle(PasswordResultMessage passwordResultMessage) {
@@ -126,10 +146,10 @@ public class Master extends AbstractLoggingActor {
 
 	protected void handle(StartMessage message) {
 		this.startTime = System.currentTimeMillis();
-		
+
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 	}
-	
+
 	protected void handle(BatchMessage message) {
 
 		// TODO: This is where the task begins:
@@ -140,7 +160,7 @@ public class Master extends AbstractLoggingActor {
 		//   -> Additional messages, maybe additional actors, code that solves the subtasks, ...
 		//   -> The code in this handle function needs to be re-written.
 		// - Once the entire processing is done, this.terminate() needs to be called.
-		
+
 		// Info: Why is the input file read in batches?
 		// a) Latency hiding: The Reader is implemented such that it reads the next batch of data from disk while at the same time the requester of the current batch processes this batch.
 		// b) Memory reduction: If the batches are processed sequentially, the memory consumption can be kept constant; if the entire input is read into main memory, the memory consumption scales at least linearly with the input size.
@@ -151,19 +171,19 @@ public class Master extends AbstractLoggingActor {
 			this.terminate();
 			return;
 		}
-		
+
 		for (String[] line : message.getLines()) {
 			String charset = line[2];
 			String passwordHash = line[3];
 			int passwordLength = Integer.parseInt(line[4]);
 			int id = Integer.parseInt(line[0]);
 
-			//Todo: add Bloomfilter params
 			Worker.PasswordMessage passwordMessage = new Worker.PasswordMessage( new BloomFilter(), charset, passwordHash, passwordLength, id);
 			this.passwordMessages.add(passwordMessage);
 
+			int firstHintIndex = 5;
 			//place hint tasks in queue
-			for(int i = 5; i < line.length; i++) {
+			for(int i = firstHintIndex; i < line.length; i++) {
 				String hintHash = line[i];
 				this.hintTaskMessages.add(new Worker.WelcomeMessage(new BloomFilter(), charset, hintHash, id));
 			}
@@ -172,6 +192,14 @@ public class Master extends AbstractLoggingActor {
 
 		for( ActorRef worker : this.idleWorkers) {
 			this.tellNextHintTask(worker);
+		}
+	}
+
+	private void tellNextTask(ActorRef receiver) {
+		if (passwordMessages.isEmpty()) {
+			this.tellNextHintTask(receiver);
+		} else {
+			this.tellNextPasswordTask(receiver);
 		}
 	}
 
@@ -184,19 +212,23 @@ public class Master extends AbstractLoggingActor {
 		}
 	}
 
+	private void tellNextPasswordTask(ActorRef receiver) {
+		// Todo: poll next password message that has all infomration
+	}
+
 	protected void terminate() {
 		this.collector.tell(new Collector.PrintMessage(), this.self());
-		
+
 		this.reader.tell(PoisonPill.getInstance(), ActorRef.noSender());
 		this.collector.tell(PoisonPill.getInstance(), ActorRef.noSender());
-		
+
 		for (ActorRef worker : this.workers) {
 			this.context().unwatch(worker);
 			worker.tell(PoisonPill.getInstance(), ActorRef.noSender());
 		}
-		
+
 		this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
-		
+
 		long executionTime = System.currentTimeMillis() - this.startTime;
 		this.log().info("Algorithm finished in {} ms", executionTime);
 	}
@@ -207,7 +239,7 @@ public class Master extends AbstractLoggingActor {
 		this.log().info("Registered {}", this.sender());
 
 		//Assign some work to registering workers. Note that the processing of the global task might have already started.
-		this.tellNextHintTask(this.sender());
+		this.tellNextTask(this.sender());
 	}
 	
 	protected void handle(Terminated message) {
