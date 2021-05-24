@@ -180,6 +180,7 @@ public class Worker extends AbstractLoggingActor {
         
         private void handle(HintMessage message) {
             // we received a message with new information and add them to ours
+            // Todo: check if id of hint belongs to current id ?! an old hint update could still be in inbox
             this.data.merge(message.getInformation());
             
             // proceed with calculating, start from the next possible index
@@ -209,7 +210,7 @@ public class Worker extends AbstractLoggingActor {
             this.log().info("Starting to crack password: ID " + message.getId()
                             + " with charset " + finalCharset);
             crackPassword(finalCharset.toCharArray(), message.getPasswordLength());
-            
+
             this.sender().tell(new Master.PasswordResultMessage(this.password, this.id), this.self());
         }
         
