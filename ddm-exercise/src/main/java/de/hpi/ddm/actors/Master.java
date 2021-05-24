@@ -144,7 +144,8 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	private void handle(PasswordResultMessage passwordResultMessage) {
-		String result = Integer.toString(passwordResultMessage.getId()).concat(";").concat(passwordResultMessage.result);
+		String result = passwordResultMessage.getId() + ";" + passwordResultMessage.result;
+		this.log().info("Received Password Result " + result);
 		this.collector.tell(new Collector.CollectMessage(result), this.self());
 		Optional<Worker.PasswordMessage> messageToRemove = this.passwordMessages.stream().filter(m -> m.getId() == passwordResultMessage.getId()).findAny();
 		messageToRemove.ifPresent(this.passwordMessages::remove);
@@ -175,6 +176,7 @@ public class Master extends AbstractLoggingActor {
 		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
 
 		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
+		this.receivedFirstBatch = true;
 		this.log().info("Received new BatchMessage");
 		if (message.getLines().isEmpty()) {
 			this.log().info("No more batches to process, waiting for last tasks to finish");
