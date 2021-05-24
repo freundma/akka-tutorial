@@ -33,6 +33,8 @@ public class Master extends AbstractLoggingActor {
 		this.workerHintMessageMap = new HashMap<>();
 		this.passwordMessages = new ArrayList<>();
 		this.idleWorkers = new LinkedList<>();
+		this.receivedFirstBatch = false;
+		this.noMoreBatches = false;
 	}
 
 	////////////////////
@@ -78,6 +80,7 @@ public class Master extends AbstractLoggingActor {
 	private final List<Worker.PasswordMessage> passwordMessages;
 	private final Queue<Worker.PasswordMessage> passwordTasksQueue;
 	private long startTime;
+	private boolean receivedFirstBatch;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -145,6 +148,8 @@ public class Master extends AbstractLoggingActor {
 		this.collector.tell(new Collector.CollectMessage(result), this.self());
 		Optional<Worker.PasswordMessage> messageToRemove = this.passwordMessages.stream().filter(m -> m.getId() == passwordResultMessage.getId()).findAny();
 		messageToRemove.ifPresent(this.passwordMessages::remove);
+
+		this.tellNextTask(this.sender());
 	}
 
 	protected void handle(StartMessage message) {
@@ -170,7 +175,9 @@ public class Master extends AbstractLoggingActor {
 		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
 
 		// Stop fetching lines from the Reader once an empty BatchMessage was received; we have seen all data then
+		this.log().info("Received new BatchMessage");
 		if (message.getLines().isEmpty()) {
+			this.log().info("No more batches to process, waiting for last tasks to finish");
 			noMoreBatches = true;
 		} else {
 
@@ -192,37 +199,41 @@ public class Master extends AbstractLoggingActor {
 			}
 		}
 
-		while (!idleWorkers.isEmpty() || this.hintTasksQueue.isEmpty() && this.passwordTasksQueue.isEmpty()) {
+		while ((!this.hintTasksQueue.isEmpty() || !this.passwordTasksQueue.isEmpty()) && !this.idleWorkers.isEmpty()){
 			this.tellNextTask(this.idleWorkers.remove());
 		}
 
 	}
 
 	private void tellNextTask(ActorRef receiver) {
-		if (passwordTasksQueue.isEmpty()) {
-			this.tellNextHintTask(receiver);
-		} else {
+		if (!this.passwordTasksQueue.isEmpty()) {
 			this.tellNextPasswordTask(receiver);
+		} else if (!this.hintTasksQueue.isEmpty()) {
+			this.tellNextHintTask(receiver);
+		}else {
+			if (this.noMoreBatches && passwordMessages.isEmpty()) {
+				terminate();
+				return;
+			}
+
+			this.log().info("Set " + receiver + " to idle mode");
+			this.idleWorkers.add(receiver);
+
+			if (!noMoreBatches && this.receivedFirstBatch) {
+				this.log().info("Requesting new batch from reader");
+				this.reader.tell(new Reader.ReadMessage(), this.self());
+			}
 		}
+
 	}
 
 	private void tellNextHintTask(ActorRef receiver) {
-		if (this.noMoreBatches && hintTasksQueue.isEmpty() && passwordMessages.isEmpty()) {
-			terminate();
-			return;
-		}
-		if(hintTasksQueue.isEmpty()){
-			this.idleWorkers.add(receiver);
-			this.reader.tell(new Reader.ReadMessage(), this.self());
-		} else {
-			this.log().info(hintTasksQueue.toString());
-			Worker.WelcomeMessage task = this.hintTasksQueue.remove();
-			receiver.tell(task, this.self());
-			//this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(task, receiver), this.self());
+		Worker.WelcomeMessage task = this.hintTasksQueue.remove();
+		receiver.tell(task, this.self());
+		//this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(task, receiver), this.self());
 
-			// put worker into id pool
-			this.addWorkerToHintPool(task.getId(), receiver);
-		}
+		// put worker into id pool
+		this.addWorkerToHintPool(task.getId(), receiver);
 	}
 
 	private void addWorkerToHintPool(int id, ActorRef worker) {
