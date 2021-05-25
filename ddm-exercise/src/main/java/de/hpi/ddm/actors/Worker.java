@@ -15,6 +15,7 @@ import akka.cluster.ClusterEvent.CurrentClusterState;
 import akka.cluster.ClusterEvent.MemberRemoved;
 import akka.cluster.ClusterEvent.MemberUp;
 import de.hpi.ddm.structures.BloomFilter;
+import de.hpi.ddm.structures.AllPermutation;
 import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -212,12 +213,7 @@ public class Worker extends AbstractLoggingActor {
                 finalCharset = finalCharset + charset.charAt(i);
             }
         }
-            
-            /* TODO performance: Im Moment werden alle Kombinationen UND alle
-               Hashes ausgerechnet, egal ob das Passwort schon recht früh gefunden wird.
-               Besser: Alle Kombinationen ausrechnen (geht bei rekursiv auch nicht anders)
-               und danach hashen bis Lösung geunden, so wie beim Hintknacken.
-            */
+  
         this.log().info("Starting to crack password: ID " + message.getId()
                 + " with charset " + finalCharset);
         crackPassword(finalCharset.toCharArray(), message.getPasswordLength());
@@ -243,20 +239,12 @@ public class Worker extends AbstractLoggingActor {
         char removal = this.charset.charAt(this.index);
         String modifiedCharset = this.charset.replace(String.valueOf(removal), "");
 
-        // generate all permutations
-        this.log().info("Generating all permutations of charset with ID " + this.id + " without " + removal + " for hint " + this.hash);
-        List<String> permutationList = new ArrayList<>();
-        heapPermutation(modifiedCharset.toCharArray(), modifiedCharset.length(),
-                modifiedCharset.length(), permutationList);
+        this.log().info("Trying to crack hint with ID " + this.id + " without " + removal + " for hint " + this.hash);
 
         // hash all permutations and try to find a match
-        for (String perm : permutationList) {
-            if (hash(perm).equals(this.hash)) {
-                this.log().info("Solved a hint: " + removal + " does not occur in the password");
-                //set the index in our BloomFilter
-                this.data.getBits().set(this.index);
-                return true;
-            }
+        if (crackHint(modifiedCharset.toCharArray())) {
+            this.log().info("Solved a hint: " + removal + " does not occur in the password");
+            return true;
         }
         return false;
     }
@@ -303,10 +291,6 @@ public class Worker extends AbstractLoggingActor {
             if (place < 0)
                 break;  // overflowed the last position, no more combinations
         }
-        // generate all combinations of with charset and given password length
-        //genAllCombinations(set, "", set.length, pwLength, combinations);
-
-        // hash until we find the correct passwort
 
     }
 
@@ -324,31 +308,22 @@ public class Worker extends AbstractLoggingActor {
             throw new RuntimeException(e.getMessage());
         }
     }
-
-    // Generating all permutations of an array using Heap's Algorithm
-    // https://en.wikipedia.org/wiki/Heap's_algorithm
-    // https://www.geeksforgeeks.org/heaps-algorithm-for-generating-permutations/
-    private void heapPermutation(char[] a, int size, int n, List<String> l) {
-        // If size is 1, store the obtained permutation
-        if (size == 1)
-            l.add(new String(a));
-
-        for (int i = 0; i < size; i++) {
-            heapPermutation(a, size - 1, n, l);
-
-            // If size is odd, swap first and last element
-            if (size % 2 == 1) {
-                char temp = a[0];
-                a[0] = a[size - 1];
-                a[size - 1] = temp;
-            }
-
-            // If size is even, swap i-th and last element
-            else {
-                char temp = a[i];
-                a[i] = a[size - 1];
-                a[size - 1] = temp;
+    
+    private boolean crackHint(char[] charset) {
+        AllPermutation perm = new AllPermutation(charset);
+        String permOutput = perm.GetFirst();
+        if (hash(permOutput).equals(this.hash)) {
+            this.data.getBits().set(this.index);
+            return true;
+        }
+        while (perm.HasNext()) {
+            permOutput = perm.GetNext();
+            if (hash(permOutput).equals(this.hash)) {
+                this.data.getBits().set(this.index);
+                return true;
             }
         }
+        return false;
     }
+        
 }
