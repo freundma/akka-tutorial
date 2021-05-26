@@ -4,7 +4,6 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -23,7 +22,6 @@ import lombok.NoArgsConstructor;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
 
-import java.util.ArrayList;
 import java.util.Random;
 
 public class Worker extends AbstractLoggingActor {
@@ -63,7 +61,7 @@ public class Worker extends AbstractLoggingActor {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class HintMessage implements Serializable {
-        private static final long serialVersionUID = 1L; //TODO: Dafuer kann das commandline tool serialver benutzt werden
+        private static final long serialVersionUID = 718838000998610000L;
         private BloomFilter information;                 // information about the chars
         private int id;                                  // id of the line
     }
@@ -76,7 +74,7 @@ public class Worker extends AbstractLoggingActor {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class PasswordMessage implements Serializable {
-        private static final long serialVersionUID = 3L; //TODO
+        private static final long serialVersionUID = 3324759103663001798L;
         private BloomFilter allInformation;     // all information out of the hints
         private String charset;                 // charset to work in
         private String passwordHash;            // password hash to crack
@@ -207,16 +205,16 @@ public class Worker extends AbstractLoggingActor {
         this.id = message.getId();
 
         //generate final charset for password cracking
-        String finalCharset = "";
+        StringBuilder finalCharset = new StringBuilder();
         for (int i = 0; i < charset.length(); i++) {
             if (!this.data.getBits().get(i)) {
-                finalCharset = finalCharset + charset.charAt(i);
+                finalCharset.append(charset.charAt(i));
             }
         }
   
         this.log().info("Starting to crack password: ID " + message.getId()
                 + " with charset " + finalCharset);
-        crackPassword(finalCharset.toCharArray(), message.getPasswordLength());
+        crackPassword(finalCharset.toString().toCharArray(), message.getPasswordLength());
 
         this.sender().tell(new Master.PasswordResultMessage(this.password, this.id), this.self());
     }
@@ -258,7 +256,6 @@ public class Worker extends AbstractLoggingActor {
     }
 
     private void crackPassword(char[] set, int pwLength) {
-        List<String> combinations = new ArrayList<>();
         int[] pos = new int[pwLength];
         // allocate a char array to hold the current combination:
         char[] combo = new char[pwLength];

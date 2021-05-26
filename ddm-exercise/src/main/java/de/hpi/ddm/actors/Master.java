@@ -59,7 +59,7 @@ public class Master extends AbstractLoggingActor {
 
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class PasswordResultMessage implements  Serializable {
-		private static final long serialVersionUID = 4L;
+		private static final long serialVersionUID = 2254637587580935151L;
 		private String result;
 		private int id;
 
