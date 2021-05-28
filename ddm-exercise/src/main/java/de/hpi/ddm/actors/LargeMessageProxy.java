@@ -56,7 +56,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
         
         @Data @NoArgsConstructor @AllArgsConstructor
         public static class LargeMessageWrapper implements Serializable {
-            private static final long serialVersionUID = 2940665245810221109L;
+            private static final long serialVersionUID = -2254287805177870008L;
             private Object message;
             private String senderActorRef;
             private String receiverActorRef;
@@ -64,7 +64,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
         
         @Data @NoArgsConstructor @AllArgsConstructor
         public static class Chunk implements Serializable {
-            private static final long serialVersionUID = 2940665245810221100L;
+            private static final long serialVersionUID = -2631091331982674006L;
             private byte[] buffer;
         }
 	
