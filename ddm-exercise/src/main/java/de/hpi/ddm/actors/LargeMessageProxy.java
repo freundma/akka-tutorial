@@ -23,63 +23,84 @@ import scala.concurrent.duration.Duration;
 
 public class LargeMessageProxy extends AbstractLoggingActor {
 
-	////////////////////////
-	// Actor Construction //
-	////////////////////////
-    
+    ////////////////////////
+    // Actor Construction //
+
+    ////////////////////////
 	public static final String DEFAULT_NAME = "largeMessageProxy";
-        
-        //buffer for receiving large messages
+
+    //buffer for receiving large messages
         private byte[] buffer;
-        
-        //number of bytes to be sent as one chunk
+
+    //number of bytes to be sent as one chunk
         private final int chunkSize = 1000;
-        
-        enum Ack {
+
+    enum Ack {
             INSTANCE;
-        }
-	
+
+    }
 	public static Props props() {
 		return Props.create(LargeMessageProxy.class);
 	}
 
+    ////////////////////
+    // Actor Messages //
 	////////////////////
-	// Actor Messages //
-	////////////////////
-	
-	@Data @NoArgsConstructor @AllArgsConstructor
+    @Data @NoArgsConstructor @AllArgsConstructor
 	public static class LargeMessage<T> implements Serializable {
-		private static final long serialVersionUID = 2940665245810221108L;
-		private T message;
-		private ActorRef receiver;
-	}
-        
-        @Data @NoArgsConstructor @AllArgsConstructor
+
+        private static final long serialVersionUID = 2940665245810221108L;
+        private T message;
+        private ActorRef receiver;
+
+    }
+    @Data @NoArgsConstructor @AllArgsConstructor
         public static class LargeMessageWrapper implements Serializable {
-            private static final long serialVersionUID = -2254287805177870008L;
-            private Object message;
-            private String senderActorRef;
-            private String receiverActorRef;
-        }
-        
-        @Data @NoArgsConstructor @AllArgsConstructor
+        private static final long serialVersionUID = -2254287805177870008L;
+        private Object message;
+        private String senderActorRef;
+        private String receiverActorRef;
+
+    }
+    @Data @NoArgsConstructor @AllArgsConstructor
         public static class Chunk implements Serializable {
-            private static final long serialVersionUID = -2631091331982674006L;
-            private byte[] buffer;
+        private static final long serialVersionUID = -2631091331982674006L;
+        private byte[] buffer;
+
+    }
+    public static class StreamInitialized implements Serializable {
+        private static final long serialVersionUID = 5905163699547714700L;
+    }
+
+    public static class StreamCompleted implements Serializable {
+        private static final long serialVersionUID = -8424327873468666921L;
+    }
+
+    public static class StreamFailure implements Serializable {
+        private static final long serialVersionUID = 8001094151981918310L;
+        private final Throwable cause;
+
+        public StreamFailure(Throwable cause) {
+            this.cause = cause;
         }
-	
+
+        public Throwable getCause() {
+            return cause;
+        }
+    }
+    /////////////////
+    // Actor State //
+
 	/////////////////
-	// Actor State //
-	/////////////////
-	
+    /////////////////////
+    // Actor Lifecycle //
+
 	/////////////////////
-	// Actor Lifecycle //
-	/////////////////////
+    ////////////////////
+    // Actor Behavior //
 
 	////////////////////
-	// Actor Behavior //
-	////////////////////
-	
+
 	@Override
 	public Receive createReceive() {
 		return receiveBuilder()
@@ -108,8 +129,8 @@ public class LargeMessageProxy extends AbstractLoggingActor {
                 } catch (Exception e) {
                     this.log().error("unable to get actorref from actorselection:" + e.getMessage());
                 }
-                
-		
+
+
 		// TODO: Implement a protocol that transmits the potentially very large message object.
 		// The following code sends the entire message wrapped in a BytesMessage, which will definitely fail in a distributed setting if the message is large!
 		// Solution options:
@@ -123,99 +144,78 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		// - If you serialize a message manually and send it, it will, of course, be serialized again by Akka's message passing subsystem.
 		// - But: Good, language-dependent serializers (such as kryo) are aware of byte arrays so that their serialization is very effective w.r.t. serialization time and size of serialized data.
                 KryoPool kryoPool = KryoPoolSingleton.get();
-                
+
                 this.log().info("Starting serialization");
-                
+
                 //serialization of actorRefs, then serialization with kryo
-                LargeMessageWrapper lMW = new LargeMessageWrapper(message, 
+                LargeMessageWrapper lMW = new LargeMessageWrapper(message,
                         Serialization.serializedActorPath(sender),
                             Serialization.serializedActorPath(receiver));
                 byte[] serializedObject = kryoPool.toBytesWithClass(lMW);
-                
+
                 this.log().info("Serialization done");
-                
+
                 List<Chunk> chunkBuffer = new ArrayList<>();
                 int numChunks = serializedObject.length / chunkSize;
                 int rest = serializedObject.length % chunkSize;
-                
+
                 // add the bytes chunkwise to the buffer
                 for (int i = 0; i < numChunks; i++) {
-                    chunkBuffer.add(new Chunk (Arrays.copyOfRange(serializedObject, 
+                    chunkBuffer.add(new Chunk (Arrays.copyOfRange(serializedObject,
                             i*chunkSize, (i+1)*chunkSize)));
                 }
-                
+
                 //add the rest to the buffer
                 if (rest != 0) {
-                    chunkBuffer.add(new Chunk (Arrays.copyOfRange(serializedObject, 
+                    chunkBuffer.add(new Chunk (Arrays.copyOfRange(serializedObject,
                             numChunks*chunkSize, serializedObject.length)));
                 }
-                
+
                 //initialize source with chunks
                 Source<Chunk, NotUsed> messageSource = Source.from(chunkBuffer);
-                
+
                 Sink<Chunk , NotUsed> sink = Sink.<Chunk>actorRefWithBackpressure(
                         receiverProxy,
                         new StreamInitialized(),
                         Ack.INSTANCE,
                         new StreamCompleted(),
                         ex -> new StreamFailure(ex));
-                
+
                 // run stream
-                messageSource.runWith(sink, this.context().system());     
+                messageSource.runWith(sink, this.context().system());
 	}
-        
+
         private void handleChunk(Chunk c) {
             buffer = ArrayUtils.addAll(buffer, c.buffer);
             this.log().info("Received chunk of length {}", c.buffer.length);
-            
+
             this.sender().tell(Ack.INSTANCE, self());
         }
-        
+
         private void handleStreamCompleted(StreamCompleted s){
             this.log().info("Stream completed");
-          
+
             //deserialize
             final KryoPool kryo = KryoPoolSingleton.get();
             LargeMessageWrapper lMW = (LargeMessageWrapper) kryo.fromBytes(buffer);
-            
+
             //get message, receiver, sender
             Object message = lMW.getMessage();
             ActorRef sender = this.context().system().provider().resolveActorRef(lMW.getSenderActorRef());
             ActorRef receiver = this.context().system().provider().resolveActorRef(lMW.getReceiverActorRef());
-            
+
             //send message to actual receiver
             receiver.tell(message, sender);
-            
+
             //clear buffer for next message
             buffer = null;
-            
+
         }
-        
+
         private void handleStreamFailure(StreamFailure s) {
             this.log().error(s.getCause(), "Stream failed!");
-            
+
             //clear buffer after failure
             buffer = null;
-        }
-        
-        public static class StreamInitialized implements Serializable {
-            private static final long serialVersionUID = 2940665245810221101L;
-        }
-
-        public static class StreamCompleted implements Serializable {
-            private static final long serialVersionUID = 2940665245810221102L;
-        }
-
-        public static class StreamFailure implements Serializable {
-            private static final long serialVersionUID = 2940665245810221103L;
-            private final Throwable cause;
-
-            public StreamFailure(Throwable cause) {
-                this.cause = cause;
-            }
-
-            public Throwable getCause() {
-                return cause;
-            }
         }
 }
