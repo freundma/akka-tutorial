@@ -33,7 +33,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
         private byte[] buffer;
         
         //number of bytes to be sent as one chunk
-        private int chunkSize = 1000;
+        private final int chunkSize = 1000;
         
         enum Ack {
             INSTANCE;
