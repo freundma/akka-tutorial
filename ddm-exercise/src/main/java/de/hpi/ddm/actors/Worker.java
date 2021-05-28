@@ -76,7 +76,7 @@ public class Worker extends AbstractLoggingActor {
     public static class PasswordMessage implements Serializable {
         private static final long serialVersionUID = 3324759103663001798L;
         private BloomFilter allInformation;     // all information out of the hints
-        private String charset;                 // charset to work in
+        private String charset;                 // charset to work with
         private String passwordHash;            // password hash to crack
         private int passwordLength;             // length of the password
         private int id;                         // ID of the line
