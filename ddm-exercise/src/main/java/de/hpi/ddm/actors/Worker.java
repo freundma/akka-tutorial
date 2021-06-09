@@ -49,25 +49,32 @@ public class Worker extends AbstractLoggingActor {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class WelcomeMessage implements Serializable {
-        private static final long serialVersionUID = 8343040942748609598L;
-        private BloomFilter welcomeData;    // contains bitset with known information (which chars are already found)
+    public static class HintTaskMessage implements Serializable {
+        private static final long serialVersionUID = 5725612770463675298L;
+        private BloomFilter hintData;    // contains bitset with known information (which chars are already found)
         private String charset;             // the charset to work on
         private String hintHash;            // the hint hash to crack
         private int id;                     // id of the line
+    }
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class WelcomeMessage implements Serializable {
+        private static final long serialVersionUID = 3725473466837766112L;
+        private BloomFilter welcomeData;    // contains bitset with known information (which chars are already found)
     }
 
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class HintMessage implements Serializable {
+    public static class HintResultMessage implements Serializable {
         private static final long serialVersionUID = 718838000998610000L;
         private BloomFilter information;                 // information about the chars
         private int id;                                  // id of the line
     }
 
     public static class YieldMessage implements Serializable {
-        private static final long serialVersionUID = 2L; //TODO
+        private static final long serialVersionUID = -3163881007848631811L;
     }
 
     @Data
@@ -126,8 +133,9 @@ public class Worker extends AbstractLoggingActor {
                 .match(MemberUp.class, this::handle)
                 .match(MemberRemoved.class, this::handle)
                 .match(WelcomeMessage.class, this::handle)
+                .match(HintTaskMessage.class, this::handle)
                 .match(YieldMessage.class, this::handle)
-                .match(HintMessage.class, this::handle)
+                .match(HintResultMessage.class, this::handle)
                 .match(PasswordMessage.class, this::handle)
                 // TODO: Add further messages here to share work between Master and Worker actors
                 .matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
@@ -161,15 +169,19 @@ public class Worker extends AbstractLoggingActor {
         if (this.masterSystem.equals(message.member()))
             this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
     }
-
     private void handle(WelcomeMessage message) {
-        this.idle = false;
         final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
         this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
 
+    }
+
+    private void handle(HintTaskMessage message) {
+        this.log().info("HintTaskMessage received");
+        this.idle = false;
+
         // get info out of message
         this.master = this.getSender();
-        this.data = message.getWelcomeData();
+        this.data = message.getHintData();
         this.charset = message.getCharset();
         this.hash = message.getHintHash();
         this.id = message.getId();
@@ -187,7 +199,7 @@ public class Worker extends AbstractLoggingActor {
         if (!this.idle) calculate(this.index + 1);
     }
 
-    private void handle(HintMessage message) {
+    private void handle(HintResultMessage message) {
         // we received a message with new information and add them to ours
         // Todo: check if id of hint belongs to current id ?! an old hint update could still be in inbox
         this.data.merge(message.getInformation());
@@ -226,7 +238,7 @@ public class Worker extends AbstractLoggingActor {
         if (calculationRound(currentIndex)) {
             // we cracked the hash, we tell the master about our success, we are done
             // this.master.tell(new HintMessage(this.data, this.id), this.self());
-            this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new HintMessage(this.data,
+            this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new HintResultMessage(this.data,
                 this.id), this.master), this.self());
             this.idle = true;
         } else {
@@ -300,7 +312,7 @@ public class Worker extends AbstractLoggingActor {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hashedBytes = digest.digest(String.valueOf(characters).getBytes("UTF-8"));
 
-            StringBuffer stringBuffer = new StringBuffer();
+            StringBuilder stringBuffer = new StringBuilder();
             for (int i = 0; i < hashedBytes.length; i++) {
                 stringBuffer.append(Integer.toString((hashedBytes[i] & 0xff) + 0x100, 16).substring(1));
             }

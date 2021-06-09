@@ -75,7 +75,7 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef largeMessageProxy;
 	private final BloomFilter welcomeData;
 	private final Map<Integer , List<ActorRef>> workerHintMessageMap;
-	private final Queue<Worker.WelcomeMessage> hintTasksQueue;
+	private final Queue<Worker.HintTaskMessage> hintTasksQueue;
 	private final Queue<ActorRef> idleWorkers;
 	private final List<Worker.PasswordMessage> passwordMessages;
 	private final Queue<Worker.PasswordMessage> passwordTasksQueue;
@@ -103,20 +103,20 @@ public class Master extends AbstractLoggingActor {
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
 				.match(PasswordResultMessage.class, this::handle)
-				.match(Worker.HintMessage.class, this::handle)
+				.match(Worker.HintResultMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
 
-	private void handle(Worker.HintMessage hintMessage) {
+	private void handle(Worker.HintResultMessage hintResultMessage) {
 		this.log().info("Received Hint from " + this.sender());
 
-		int id = hintMessage.getId();
+		int id = hintResultMessage.getId();
 		Optional<Worker.PasswordMessage> passwordMessage = this.passwordMessages.stream().filter(m -> m.getId() == id).findAny();
 		passwordMessage.ifPresent(message -> {
 
 			// update password bloom filter
-			message.getAllInformation().merge(hintMessage.getInformation());
+			message.getAllInformation().merge(hintResultMessage.getInformation());
 
 			// send filter update to all workers that work on hints of id
 			List<ActorRef> workersToBeUpdated = this.workerHintMessageMap.get(id).stream().filter(actorRef -> !actorRef.equals(this.sender())).collect(Collectors.toList());
@@ -125,12 +125,12 @@ public class Master extends AbstractLoggingActor {
 				this.passwordTasksQueue.add(message);
 			} else {
 				for (ActorRef worker : workersToBeUpdated) {
-					worker.tell(new Worker.HintMessage(message.getAllInformation(), id), this.self());
+					worker.tell(new Worker.HintResultMessage(message.getAllInformation(), id), this.self());
 				}
 
-				for (Worker.WelcomeMessage hintTaskMessage : this.hintTasksQueue) {
+				for (Worker.HintTaskMessage hintTaskMessage : this.hintTasksQueue) {
 					if (hintTaskMessage.getId() == id) {
-						hintTaskMessage.setWelcomeData(message.getAllInformation());
+						hintTaskMessage.setHintData(message.getAllInformation());
 					}
 				}
 				// remove worker from workerHintMap
@@ -196,7 +196,7 @@ public class Master extends AbstractLoggingActor {
 				//place hint tasks in queue
 				for (int i = firstHintIndex; i < line.length; i++) {
 					String hintHash = line[i];
-					this.hintTasksQueue.add(new Worker.WelcomeMessage(new BloomFilter(charset.length(), false), charset, hintHash, id));
+					this.hintTasksQueue.add(new Worker.HintTaskMessage(new BloomFilter(charset.length(), false), charset, hintHash, id));
 				}
 			}
 		}
@@ -230,7 +230,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	private void tellNextHintTask(ActorRef receiver) {
-		Worker.WelcomeMessage task = this.hintTasksQueue.remove();
+		Worker.HintTaskMessage task = this.hintTasksQueue.remove();
 		// receiver.tell(task, this.self());
 		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(task, receiver), this.self());
 
@@ -276,6 +276,7 @@ public class Master extends AbstractLoggingActor {
 		this.workers.add(this.sender());
 		this.log().info("Registered {}", this.sender());
 
+		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
 		//Assign some work to registering workers. Note that the processing of the global task might have already started.
 		this.tellNextTask(this.sender());
 	}
