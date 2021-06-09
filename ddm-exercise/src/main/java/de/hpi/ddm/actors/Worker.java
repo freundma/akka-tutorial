@@ -216,14 +216,18 @@ public class Worker extends AbstractLoggingActor {
                 + " with charset " + finalCharset);
         crackPassword(finalCharset.toString().toCharArray(), message.getPasswordLength());
 
-        this.sender().tell(new Master.PasswordResultMessage(this.password, this.id), this.self());
+        //this.sender().tell(new Master.PasswordResultMessage(this.password, this.id), this.self());
+        this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Master.PasswordResultMessage(this.password,
+                this.id), this.sender()), this.self());
     }
 
     private void calculate(int currentIndex) {
         // do one calculation round
         if (calculationRound(currentIndex)) {
             // we cracked the hash, we tell the master about our success, we are done
-            this.master.tell(new HintMessage(this.data, this.id), this.self());
+            // this.master.tell(new HintMessage(this.data, this.id), this.self());
+            this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new HintMessage(this.data,
+                this.id), this.master), this.self());
             this.idle = true;
         } else {
             // we did not crack the hash, we yield to hear for eventually cracked hints
