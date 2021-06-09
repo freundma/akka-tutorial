@@ -231,8 +231,8 @@ public class Master extends AbstractLoggingActor {
 
 	private void tellNextHintTask(ActorRef receiver) {
 		Worker.HintTaskMessage task = this.hintTasksQueue.remove();
-		// receiver.tell(task, this.self());
-		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(task, receiver), this.self());
+		receiver.tell(task, this.self());
+		//this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(task, receiver), this.self());
 
 		// put worker into id pool
 		this.addWorkerToHintPool(task.getId(), receiver);
@@ -250,8 +250,8 @@ public class Master extends AbstractLoggingActor {
 
 	private void tellNextPasswordTask(ActorRef receiver) {
 		// poll next password message that has all information
-		// receiver.tell(this.passwordTasksQueue.remove(), this.self());
-		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(this.passwordTasksQueue.remove(), receiver), this.self());
+		 receiver.tell(this.passwordTasksQueue.remove(), this.self());
+		//this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(this.passwordTasksQueue.remove(), receiver), this.self());
 	}
 
 	protected void terminate() {
