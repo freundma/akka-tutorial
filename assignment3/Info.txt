@@ -1,1 +1,4 @@
-Leider konnten wir bei erneutem Testen den von Ihnen beschriebenen Fehler (Worker Systems verlassen nach und nach das Cluster) nicht reproduzieren. Da wir nicht über die Ressourcen eines großen Clusters verfügen, haben wir die Anzahl der Passwörter etwas reduziert und das Cracken der Passwörter in einem verteilten Setting (so wie in der Mail vorgeschlagen) getestet, wo der Algorithmus sauber durchläuft. Ein Verlassen des Clusters durch Worker Systems konnten wir nicht feststellen und können uns auch den Grund dafür nicht erklären. 
+Leider konnten wir bei erneutem Testen den von Ihnen beschriebenen Fehler (Worker Systems verlassen nach und nach das Cluster) nicht reproduzieren. 
+Da wir nicht über die Ressourcen eines großen Clusters verfügen, haben wir die Anzahl der Passwörter auf 20 reduziert und das Cracken der Passwörter in einem verteilten Setting (so wie in der Mail vorgeschlagen) getestet.
+Wir haben dazu 5 Workersystems mit jeweils 4 Workern auf 2 Pcs gestartet. Der Algorithmus lief sauber durch.
+Ein Verlassen des Clusters durch Worker Systems konnten wir nicht feststellen und können uns auch den Grund dafür nicht erklären.
